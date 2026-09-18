@@ -1,4 +1,7 @@
-"""Bridge Responses freeform tools through Gemini function declarations.
+"""Bridge Responses tools through Gemini function declarations.
+
+Two adaptations, both on the way in: a freeform `custom` tool becomes a function taking one string,
+and every tool's JSON Schema is rewritten into the subset Google accepts.
 
 Streaming event names follow the OpenAI Responses streaming API:
 https://platform.openai.com/docs/api-reference/responses-streaming
@@ -13,6 +16,34 @@ def custom_names(request):
     return {tool['name'] for tool in (request.get('tools') or [])
             if isinstance(tool, dict) and tool.get('type') == 'custom'
             and isinstance(tool.get('name'), str)}
+
+
+def gemini_schema(node):
+    """A JSON Schema Google will accept, with union types collapsed.
+
+    `{"type": ["number", "null"]}` is legal JSON Schema, legal on the OpenAI Responses API, and
+    rejected by Antigravity with a bare HTTP 400 that names nothing — so a client whose optional
+    parameters are typed that way cannot call a single tool. Any client: measured with omp, whose
+    `grep` tool declares `skip` exactly that way, and one tool out of eleven took the whole request
+    down. The collapse keeps the nullability as Gemini spells it (`nullable`), because dropping it
+    silently would change what the model is told it may send.
+    """
+    if isinstance(node, list):
+        return [gemini_schema(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    result = {}
+    for key, value in node.items():
+        if key == 'type' and isinstance(value, list):
+            concrete = [entry for entry in value if entry != 'null']
+            if len(concrete) != len(value):
+                result['nullable'] = True
+            # More than one concrete type is not expressible; the first is what the tool's own
+            # documentation leads with, and an unrepresentable union is better narrowed than dropped.
+            result['type'] = concrete[0] if concrete else 'string'
+            continue
+        result[key] = gemini_schema(value)
+    return result
 
 
 def encode_request(request):
@@ -39,6 +70,10 @@ def encode_request(request):
         }
         tool.clear()
         tool.update(tool_format)
+    # After the custom-tool rewrite, so the function it produced is normalized too.
+    for tool in (result.get('tools') or []):
+        if isinstance(tool, dict) and isinstance(tool.get('parameters'), dict):
+            tool['parameters'] = gemini_schema(tool['parameters'])
     if isinstance(result.get('input'), list):
         for item in result['input']:
             if not isinstance(item, dict):

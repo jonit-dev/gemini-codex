@@ -67,3 +67,31 @@ class CustomTools(unittest.TestCase):
         self.assertEqual(BRIDGE['encode_request']({'tools': None, 'input': 'hello'}),
                          {'tools': None, 'input': 'hello'})
         self.assertEqual(BRIDGE['custom_names']({'tools': None}), set())
+
+    def test_union_types_are_collapsed_for_google(self):
+        # Antigravity answers HTTP 400 for `"type": ["number", "null"]` and names nothing, so this
+        # is the shape that has to leave the gateway: one concrete type plus Gemini's `nullable`.
+        request = {'tools': [{'type': 'function', 'name': 'grep', 'parameters': {
+            'type': 'object',
+            'properties': {
+                'pattern': {'type': 'string'},
+                'skip': {'type': ['number', 'null']},
+                'rows': {'type': 'array', 'items': {'type': ['string', 'null']}},
+            },
+            'required': ['pattern'],
+        }}]}
+        properties = BRIDGE['encode_request'](request)['tools'][0]['parameters']['properties']
+        self.assertEqual(properties['skip'], {'type': 'number', 'nullable': True})
+        self.assertEqual(properties['rows']['items'], {'type': 'string', 'nullable': True})
+        self.assertEqual(properties['pattern'], {'type': 'string'})
+
+    def test_property_named_type_survives_the_collapse(self):
+        request = {'tools': [{'type': 'function', 'name': 'shape', 'parameters': {
+            'type': 'object',
+            'properties': {'type': {'type': ['string', 'null']}},
+            'required': ['type'],
+        }}]}
+        parameters = BRIDGE['encode_request'](request)['tools'][0]['parameters']
+        self.assertEqual(parameters['type'], 'object')
+        self.assertEqual(parameters['properties']['type'], {'type': 'string', 'nullable': True})
+        self.assertEqual(parameters['required'], ['type'])

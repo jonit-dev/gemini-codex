@@ -476,9 +476,9 @@ async def acquire_serially(manager, model, run_in_threadpool):
         data = await run_in_threadpool(load_accounts_read_only)
         quota = active_quota(data, model, time.time())
         if quota:
-            import math
-            raise HTTPException(429, quota_message(quota), headers={
-                'Retry-After': str(max(1, math.ceil(quota['resetAt'] - time.time())))})
+            # Codex replaces HTTP 429 bodies with its retry-limit error.
+            # Explicit exhausted quota is terminal; retain the reset in the body.
+            raise HTTPException(400, quota_message(quota))
         account = await run_in_threadpool(acquire_and_track)
         if account is not None:
             return account

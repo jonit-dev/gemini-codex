@@ -1,3 +1,26 @@
+# Argon verification — 2026-10-15
+
+Verified with Codex CLI 0.163.0, Antigravity CLI 1.4.0, and
+codex-antigravity-auth 2.2.0 on a paid Google AI Pro account.
+
+| Check | Observed result |
+| --- | --- |
+| Official CLI | Explicit `gemini-4-argon-medium` returned `ARGON_ALIVE`. |
+| gcodex tool roundtrip | `gcodex -m gemini-4-argon exec` ran `pwd` through the shell tool, consumed its result, and returned `ARGON_ALIVE`; Codex reported medium reasoning. |
+| Backend identity | Gateway transport returned HTTP 200, `modelVersion: gemini-4-argon-trial`, and `ARGON_ALIVE`. |
+| Flash compatibility | The same patched transport returned HTTP 200 and `FLASH_ALIVE` for Gemini 3.8 Flash. |
+| Patch lifecycle | Revert, apply, repeated apply, status check, and final revert passed on a temporary package copy. |
+
+The legacy IDE User-Agent returned HTTP 404 for Argon. Using the installed CLI
+identity exposed Argon in model discovery and made generation work, including
+with the gateway's existing OAuth token. No additional OAuth scope or token
+migration was needed. The patch reads `agy --version` once per process rather
+than hardcoding an obsolete client version.
+
+All 164 standard-library tests passed. Argon native patch edits, images, resume,
+and high/low effort generation have not been separately exercised; the older
+Flash verification below remains historical evidence for those workflows.
+
 # Real-usage verification — 2026-09-07
 
 Verified with Codex CLI 0.153.4, codex-antigravity-auth 2.2.0, and the installed

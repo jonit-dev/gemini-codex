@@ -66,7 +66,7 @@ class Launcher(unittest.TestCase):
         stub = '''codex-antigravity() {
 case "$1" in
 status) echo 'reachable: yes';;
-models) %s echo '- gemini-3.8-flash: default'; echo '- gemini-3.8-flash-high: high';;
+models) %s echo '- gemini-3.8-flash: default'; echo '- gemini-3.8-flash-high: high'; echo '- gemini-4-argon: Argon';;
 esac
 }
 codex() { printf '%%s\\0' "$@"; }
@@ -91,6 +91,12 @@ else echo 'model_catalog_json="/unused"'; fi; }
         result = self.run_launcher('--model', 'gemini-3.8-flash-high', 'exec', 'hello')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b'exec\0hello\0', result.stdout)
+
+    def test_argon_selection_does_not_fall_back_to_flash(self):
+        result = self.run_launcher('--model', 'gemini-4-argon', 'exec', 'hello')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b'model="gemini-4-argon"', result.stdout)
+        self.assertNotIn(b'not an Antigravity model', result.stderr)
 
     def test_missing_model(self):
         for args in [('--model',), ('--model=',), ('--model', '--high')]:

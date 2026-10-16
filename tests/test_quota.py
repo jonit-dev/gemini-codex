@@ -66,7 +66,9 @@ class QuotaFlow(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('details', json.dumps(data))
             with self.assertRaises(HTTPError) as error:
                 await SAFETY['acquire_serially'](manager, 'gemini-3.8-flash-high', pool)
-            self.assertGreater(int(error.exception.headers['Retry-After']), 86400)
+            self.assertEqual(error.exception.status, 400)
+            self.assertIsNone(error.exception.headers)
+            self.assertEqual(error.exception.detail, message)
             manager.acquire_account.assert_not_called()
             self.assertIsNone(await SAFETY['rate_limit_pause_seconds']('gemini', pool, 3600))
             self.assertIsNone(SAFETY['active_quota'](data, 'claude', time.time()))

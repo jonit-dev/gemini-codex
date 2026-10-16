@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gcodex setup — run the Codex CLI harness against Gemini 3.x Flash, billed to
+# gcodex setup — run the Codex CLI harness against Gemini 4 Argon or 3.8 Flash, billed to
 # your Google AI Pro subscription instead of API tokens.
 #
 # This script ships NO credentials. It extracts Google's Antigravity OAuth
@@ -126,13 +126,18 @@ else
 fi
 
 # --------------------------------------------------------------------------
-# 3. Register the Gemini 3.8 Flash catalog entries (idempotent).
+# 3. Register the Gemini model catalog entries (idempotent).
 say "Registering Gemini 3.8 Flash in the gateway catalog..."
 add_model() { codex-antigravity models add "$1" --backend-id "$2" --display-name "$3" \
   --family gemini --context-window 1048576 --default-reasoning-level "$4" "${@:5}" >/dev/null 2>&1 || true; }
 add_model gemini-3.8-flash      gemini-3.8-flash-medium "Gemini 3.8 Flash (Medium)" medium --alias gemini-3.8-flash-medium
 add_model gemini-3.8-flash-high gemini-3.8-flash-high   "Gemini 3.8 Flash (High)"   high
 add_model gemini-3.8-flash-low  gemini-3.8-flash-low    "Gemini 3.8 Flash (Low)"    low
+
+say "Registering Gemini 4 Argon in the gateway catalog..."
+add_model gemini-4-argon      gemini-4-argon-medium "Gemini 4 Argon (Medium)" medium --alias gemini-4-argon-medium
+add_model gemini-4-argon-high gemini-4-argon-high   "Gemini 4 Argon (High)"   high
+add_model gemini-4-argon-low  gemini-4-argon-low    "Gemini 4 Argon (Low)"    low
 
 # --------------------------------------------------------------------------
 # 4. Install the Codex profile and the launcher.

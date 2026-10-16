@@ -34,6 +34,41 @@ DEFAULT_GLOBS = [
     "~/.local/pipx/venvs/codex-antigravity-auth/lib/python*/site-packages/codex_antigravity_auth",
 ]
 
+CLI_TRANSPORT_EDITS = [
+    (
+        'from .constants import ANTIGRAVITY_ENDPOINT_PROD, get_platform\n',
+        'from .constants import ANTIGRAVITY_ENDPOINT_PROD, get_platform\nfrom .cli_identity import cli_user_agent\n',
+    ),
+    (
+        """    def build_headers(self, lease: AccountLease) -> dict[str, str]:
+        # Match the real Antigravity IDE header set exactly.  OpenCodex sends
+        # only User-Agent + Authorization for generateContent; extra headers
+        # like X-Goog-Api-Client and Client-Metadata cause fingerprint mismatches.
+        headers = {
+            "User-Agent": ide_user_agent(),
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {lease.access_token}",
+        }
+        # NOTE: We intentionally ignore stored fingerprint overrides for
+        # User-Agent, apiClient, and clientMetadata.  The real Antigravity IDE
+        # only sends User-Agent + Authorization for generateContent; extra
+        # headers (X-Goog-Api-Client, Client-Metadata) cause fingerprint
+        # mismatches and 403 VALIDATION_REQUIRED errors.
+        return headers
+
+""",
+        """    def build_headers(self, lease: AccountLease) -> dict[str, str]:
+        # Argon is served to Antigravity CLI clients, not legacy IDE clients.
+        return {
+            "User-Agent": cli_user_agent(),
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {lease.access_token}",
+        }
+
+""",
+    ),
+]
+
 TRANSFORM_EDITS = [
     (
         "from .schema import clean_json_schema\n",
@@ -244,7 +279,7 @@ SERVER_EDITS = [
         '            from .gateway_safety import capture_quota\n'
         '            quota_detail = await capture_quota(res, response_account.get("email", ""), model, run_in_threadpool)\n'
         '            if quota_detail:\n'
-        '                raise HTTPException(429, quota_detail)\n'
+        '                raise HTTPException(400, quota_detail)\n'
         '            if res.status_code in (401, 403, 429):\n',
     ),
     (
@@ -600,6 +635,7 @@ def main() -> None:
     safety = pkg / "gateway_safety.py"
     custom = pkg / "custom_tools.py"
     accounts = pkg / "accounts.py"
+    identity = pkg / "cli_identity.py"
 
     if args.with_dumps:
         parser.error("request body dumps were removed; run without --with-dumps")
@@ -607,7 +643,8 @@ def main() -> None:
     if args.check:
         patched = (module.exists() and module.read_bytes() == (HERE / module.name).read_bytes()
                    and all(new in transform.read_text() for _, new in TRANSFORM_EDITS)
-                   and all(new in transport.read_text() for _, new in TRANSPORT_EDITS))
+                   and all(new in transport.read_text() for _, new in TRANSPORT_EDITS + CLI_TRANSPORT_EDITS)
+                   and identity.exists() and identity.read_bytes() == (HERE / identity.name).read_bytes())
         guarded = (safety.exists() and safety.read_bytes() == (HERE / safety.name).read_bytes()
                    and all(new in state.read_text() for _, new in SAFETY_EDITS)
                    and all(new in server.read_text() for _, new in SERVER_EDITS)
@@ -631,20 +668,20 @@ def main() -> None:
                 planned[path] = bak.read_text()
                 backups.append(bak)
             elif any(marker in path.read_text() for marker in (
-                "from .thought_signatures", "from .gateway_safety", "from .custom_tools",
+                "from .thought_signatures", "from .gateway_safety", "from .custom_tools", "from .cli_identity",
                 "Release in-memory leases before cancellable logging awaits",
             )):
                 sys.exit(f"cannot revert {path.name}: backup missing; no files changed")
         restored_sources = [planned.get(path, path.read_text())
                             for path in (transform, transport, state, server, accounts)]
-        if any(any(marker in source for marker in ("from .thought_signatures", "from .gateway_safety", "from .custom_tools"))
+        if any(any(marker in source for marker in ("from .thought_signatures", "from .gateway_safety", "from .custom_tools", "from .cli_identity"))
                for source in restored_sources):
             sys.exit("cannot revert: backups still depend on patch helpers; no files changed")
         commit_files(planned)
         restored = [path.name for path in planned]
         for bak in backups:
             bak.unlink()
-        for helper in (module, safety, custom):
+        for helper in (module, safety, custom, identity):
             if helper.exists():
                 helper.unlink()
                 restored.append(helper.name + " (removed)")
@@ -658,6 +695,11 @@ def main() -> None:
         '                release_tracked_account(account_manager, used_account.get("email"))\n',
     )
     server_text = server_text.replace(SERVER_EDITS[-1][1], SERVER_EDITS[-1][0])
+    # Upgrade the already-installed quota patch without duplicating its block.
+    server_text = server_text.replace(
+        '                raise HTTPException(429, quota_detail)\n',
+        '                raise HTTPException(400, quota_detail)\n',
+    )
     for old, new in LEGACY_SERVER_EDITS:
         server_text = server_text.replace(new, old)
     for old, new in LEGACY_TRANSFORM_EDITS:
@@ -670,13 +712,14 @@ def main() -> None:
         sys.exit("unknown debug dump code; refusing to patch")
     changed = commit_files({
         transform: render_edits(transform_text, TRANSFORM_EDITS + CUSTOM_TRANSFORM_EDITS, transform.name),
-        transport: render_edits(transport_text, TRANSPORT_EDITS, transport.name),
+        transport: render_edits(transport_text, TRANSPORT_EDITS + CLI_TRANSPORT_EDITS, transport.name),
         state: render_edits(state.read_text(), SAFETY_EDITS, state.name),
         server: render_edits(server_text, SERVER_EDITS, server.name),
         accounts: render_edits(accounts.read_text(), ACCOUNT_EDITS, accounts.name),
         module: (HERE / module.name).read_text(),
         safety: (HERE / safety.name).read_text(),
         custom: (HERE / custom.name).read_text(),
+        identity: (HERE / identity.name).read_text(),
     })
 
     print(f"package: {pkg}")

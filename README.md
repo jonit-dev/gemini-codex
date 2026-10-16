@@ -1,7 +1,11 @@
-# gcodex
+# gemini-codex
 
-Run the OpenAI **Codex CLI harness** against **Gemini 3.8 Flash**, billed to your
+[![CI](https://github.com/jonit-dev/gemini-codex/actions/workflows/ci.yml/badge.svg)](https://github.com/jonit-dev/gemini-codex/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](setup.sh)
+
+Run the OpenAI **Codex CLI harness** against **Gemini 4 Argon** or **Gemini 3.8 Flash**, billed to your
 **Google AI Pro** subscription instead of API tokens.
+
+> Repo is `gemini-codex`; the launcher and Codex profile stay named `gcodex`.
 
 `gcodex` is a thin wrapper: it declares a Codex *profile* that points the harness
 at a local gateway which speaks the OpenAI Responses protocol on one side and
@@ -13,16 +17,18 @@ Codex harness ──▶ OpenAI Responses protocol ──▶ codex-antigravity ga
                                                   (localhost:51122, loopback)
                                                         │
                                                         ▼
-                                                  Google OAuth ──▶ Gemini 3.8 Flash
+                                                  Google OAuth ──▶ Gemini 4 Argon / 3.8 Flash
 ```
 
 The provider lives in `~/.codex/gcodex.config.toml` and is selected with
 `codex --profile gcodex`, which layers that file over your existing
 `~/.codex/config.toml`.
 
-**Status.** Verified 2026-09-07 against `codex-antigravity-auth` 2.2.0 and
-Gemini 3.8 Flash: single-turn prompts, multi-turn tool loops, and `apply_patch`
-file edits all work with the gateway patch below applied.
+**Status.** Verified 2026-10-15 with Codex CLI 0.163.0, Antigravity CLI 1.4.0,
+and `codex-antigravity-auth` 2.2.0. Argon at medium effort completed a shell-tool
+roundtrip through gcodex; Flash still answered correctly. Earlier Flash checks
+also cover native `apply_patch` edits and session resume. See [STABILITY.md](STABILITY.md)
+for the scope of each verification.
 
 Built on [`codex-antigravity-auth`](https://pypi.org/project/codex-antigravity-auth/).
 Not affiliated with, endorsed by, or supported by Google or OpenAI.
@@ -56,7 +62,7 @@ and remaining limits.
 1. Find your `agy` binary and extract the Antigravity OAuth client from it.
 2. Install the gateway (`codex-antigravity-auth`) via `uv` if it's missing.
 3. Patch the gateway to preserve Gemini thought signatures (see below).
-4. Register the Gemini 3.8 Flash catalog entries (medium / high / low).
+4. Register Gemini 4 Argon and Gemini 3.8 Flash (medium / high / low).
 5. Install the Codex profile (`~/.codex/gcodex.config.toml`) and the launcher
    (`~/.local/bin/gcodex`).
 
@@ -135,16 +141,14 @@ agy -p "hi"
 
 If that works, your account is good and any failure is on the gcodex side.
 
-**A failure here does not condemn gcodex.** `agy` reaches Gemini through its own
-OAuth client and is metered separately from the Antigravity IDE client the
-gateway uses, so `agy` can report `Individual quota reached` — its limit resets
-on a multi-day cycle — while gcodex keeps working normally. Observed directly:
-two full gcodex sessions completed between two quota-blocked `agy` runs. Treat
-this check as confirming entitlement, not as a gcodex health check; for that,
-run `gcodex exec "Reply with exactly: ALIVE"`.
+**A failure here does not condemn gcodex.** The CLI and gateway can have
+separate cached sign-ins and request state. Check that both use the Google
+account with your paid AI Pro plan. For a gcodex health check, run
+`gcodex -m gemini-4-argon exec "Reply with exactly: ALIVE"`.
 
-`agy` is otherwise only needed at install time, as a *file*: `setup.sh` parses
-the OAuth client out of the binary. gcodex never invokes `agy` at runtime.
+`setup.sh` extracts the OAuth client from your `agy` binary. The gateway also
+runs `agy --version` once per process to identify the installed CLI in Google
+request headers; model prompts and tool calls go directly through the gateway.
 
 ---
 
@@ -158,6 +162,19 @@ gcodex --med           # medium effort (default)
 
 GCODEX_MODEL=<id> gcodex     # any id from `codex-antigravity models list`
 ```
+
+Gemini 4 Argon is also available on paid Google AI Pro and Ultra accounts:
+
+```sh
+gcodex -m gemini-4-argon       # medium effort
+gcodex -m gemini-4-argon-high  # high effort
+gcodex -m gemini-4-argon-low   # low effort
+```
+
+Re-run `./setup.sh` to register Argon and update the gateway patch. The gateway
+now identifies your installed Antigravity CLI (`agy --version`), because Google
+does not serve Argon to legacy IDE clients. Flash remains the default; the
+`--high`, `--low`, and `--med` shorthands still select Flash.
 
 Everything else is passed straight through to `codex`, including subcommands:
 
@@ -264,7 +281,10 @@ hardcoded, so the trim follows whatever you have installed.
 ## Rate limits (429)
 
 Google also uses HTTP 429 for **exhausted quota**. When its error identifies
-`QUOTA_EXHAUSTED` or "Individual quota reached", gcodex stops automatic retries
+`QUOTA_EXHAUSTED` or "Individual quota reached", the gateway returns a terminal
+HTTP 400 for requests that have not started streaming, so Codex displays the
+quota message instead of replacing it with "exceeded retry limit". During a
+stream, it emits a terminal `response.failed` event. gcodex stops automatic retries
 and reports **Google quota exhausted**, with the reset date and time in the
 gateway's local timezone (including its UTC offset). The reset comes from
 Google's `quotaResetTimeStamp`, falling back to `quotaResetDelay` or `RetryInfo`;
@@ -342,7 +362,7 @@ you would rather be told sooner.
 
 ## Ban risk
 
-Read this once. The gateway authenticates as the **Antigravity desktop client**
+Read this once. The gateway uses **Antigravity OAuth and CLI request headers**
 — it is an *unofficial* path to Gemini through your subscription, not a
 sanctioned API. Google has disabled Antigravity access for accounts observed
 doing this.
@@ -416,8 +436,8 @@ fallback into `~/.codex/antigravity-credentials.json` under
 `_fallbacks.other_secret` — swap the `client_secret` for that value and retry.
 
 **`SUBSCRIPTION_REQUIRED` / "no valid license" (#1001) at request time.**
-The wrong OAuth client was used. The correct one is the **Antigravity IDE
-consumer client** — the `client_id` that appears in
+The wrong OAuth client was used. The correct one is the **Antigravity
+consumer OAuth client shared by the CLI and IDE** — the `client_id` that appears in
 `~/.config/Antigravity IDE/logs/*/auth.log`, *not* the other client baked into
 the binary. `setup.sh` already prefers the auth.log client; if you hit this,
 re-check that discovery. The working client id family starts `1071006060591-…`;
@@ -465,4 +485,6 @@ useful: `codex-antigravity doctor`, `codex-antigravity status`, and
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Contributions welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md). Security reports: see [SECURITY.md](SECURITY.md),
+never a public issue.
